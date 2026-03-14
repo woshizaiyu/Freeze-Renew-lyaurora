@@ -16,21 +16,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          # ✅ 不用 cache，避免依赖 lock 文件
 
       - name: 📦 安装依赖
-        run: npm install @playwright/test
+        run: npm install
 
       - name: 🌐 安装 Playwright 浏览器
         run: npx playwright install chromium --with-deps
 
       - name: 🛡️ 启动 GOST 代理转发
-        if: env.GOST_PROXY != ''
+        if: ${{ secrets.GOST_PROXY != '' }}
         env:
           GOST_PROXY: ${{ secrets.GOST_PROXY }}
         run: |
-          wget -q https://github.com/ginuerzh/gost/releases/latest/download/gost_linux_amd64.tar.gz
-          tar -xzf gost_linux_amd64.tar.gz
+          VERSION=$(curl -s https://api.github.com/repos/ginuerzh/gost/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d 'v')
+          echo "📦 GOST 版本: $VERSION"
+          wget -q "https://github.com/ginuerzh/gost/releases/download/v${VERSION}/gost_${VERSION}_linux_amd64.tar.gz"
+          tar -xzf "gost_${VERSION}_linux_amd64.tar.gz"
           chmod +x gost
           nohup ./gost -L http://:8080 -F "$GOST_PROXY" > gost.log 2>&1 &
           sleep 3
