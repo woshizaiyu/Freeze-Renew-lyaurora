@@ -1,7 +1,7 @@
 name: 🎮 FreezeHost 自动续期
 on:
-  schedule:
-    - cron: '0 8 */3 * *'
+ # schedule:
+ #   - cron: '0 8 */3 * *'
   workflow_dispatch:
 jobs:
   renew:
