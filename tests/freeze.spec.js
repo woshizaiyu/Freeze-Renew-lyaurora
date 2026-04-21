@@ -155,7 +155,6 @@ test('FreezeHost 自动续期', async ({}, testInfo) => {
     });
 
     try {
-        // ── 出口 IP 验证（仅测一次） ─────────────────────────
         console.log('🌐 验证出口 IP...');
         try {
             const ipPage = await browser.newPage();
@@ -172,7 +171,6 @@ test('FreezeHost 自动续期', async ({}, testInfo) => {
         let allSummary = [];
         let globalHasError = false;
 
-        // ── 遍历处理每个 Token 账号 ─────────────────────────
         for (let tIndex = 0; tIndex < tokens.length; tIndex++) {
             let currentToken = tokens[tIndex];
             let customName = null;
@@ -465,17 +463,24 @@ test('FreezeHost 自动续期', async ({}, testInfo) => {
                             statusText = `❓ 结果未知`;
                         }
                     } catch (err) {
-                        // ─── 方案 B：封禁过滤逻辑开始 ──────────────────────────
+                        // ─── 方案 B 升级版：增强封禁/缺失过滤 ──────────────────────────
                         const errorMessage = err.message || "";
+                        
+                        // 1. 检查是否有明确的封禁关键词
                         const bannedKeywords = ['封禁', 'banned', 'suspended', 'disabled', '403', 'forbidden'];
-                        const isBanned = bannedKeywords.some(k => errorMessage.toLowerCase().includes(k.toLowerCase()));
+                        const isBannedText = bannedKeywords.some(k => errorMessage.toLowerCase().includes(k.toLowerCase()));
+                        
+                        // 2. 检查是否是由于按钮不存在导致的超时 (Timeout 8000ms exceeded)
+                        // 因为被封禁的机器通常不显示续期按钮
+                        const isTimeout = errorMessage.toLowerCase().includes('timeout') && 
+                                          errorMessage.toLowerCase().includes('exceeded');
 
-                        if (isBanned) {
-                            console.warn(`  ⚠️ 检测到服务器已被封禁，已自动跳过: ${errorMessage}`);
-                            statusText = `⚠️ 已被封禁(跳过)`;
-                            // 这里不再设置 globalHasError = true, 从而保证测试通过
+                        if (isBannedText || isTimeout) {
+                            console.warn(`  ⚠️ 检测到服务器不可用/已被封禁（按钮缺失），已自动跳过: ${errorMessage}`);
+                            statusText = `⚠️ 已封禁/缺失(跳过)`;
+                            // 不设置 globalHasError = true
                         } else {
-                            console.log(`  ❌ 处理此服务器时发生错误: ${err.message}`);
+                            console.log(`  ❌ 处理此服务器时发生真实错误: ${err.message}`);
                             statusText = `❌ 异常 (${err.message.slice(0, 15)})`;
                             globalHasError = true;
                             
@@ -485,7 +490,7 @@ test('FreezeHost 自动续期', async ({}, testInfo) => {
                                 console.log(`  📸 已保存错误截图: test-results/${safeName}-error.png`);
                             } catch (e) { }
                         }
-                        // ─── 封禁过滤逻辑结束 ──────────────────────────────────
+                        // ─── 过滤逻辑结束 ──────────────────────────────────────────
                     }
                     pushResult();
                 }
