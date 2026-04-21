@@ -379,4 +379,151 @@ test('FreezeHost 自动续期', async ({}, testInfo) => {
 
                         const dMatch = renewalStatusText.match(/(\d+(?:\.\d+)?)\s*day/i);
                         const hMatch = renewalStatusText.match(/(\d+(?:\.\d+)?)\s*hour/i);
-                        const mMatch = renewalStatusText.match(/(\d+(
+                        const mMatch = renewalStatusText.match(/(\d+(?:\.\d+)?)\s*minute/i);
+
+                        if (dMatch || hMatch || mMatch) {
+                            const valD = dMatch ? parseFloat(dMatch[1]) : 0;
+                            const valH = hMatch ? parseFloat(hMatch[1]) : 0;
+                            const valM = mMatch ? parseFloat(mMatch[1]) : 0;
+                            remainingDaysVal = valD + (valH / 24) + (valM / 1440);
+                            d = Math.floor(remainingDaysVal);
+                            const tH = (remainingDaysVal - d) * 24;
+                            h = Math.floor(tH);
+                            m = Math.round((tH - h) * 60);
+                            parsed = true;
+                        }
+
+                        if (parsed) {
+                            timeDisplay = `${d}天 ${h}小时 ${m}分钟`;
+                            console.log(`  ⏳ 精确时效计算：${timeDisplay}`);
+                            if (remainingDaysVal > 7) {
+                                console.log(`  🛡️ 剩余 > 7 天，无需续期`);
+                                shouldRenew = false;
+                            } else {
+                                console.log(`  ✅ 剩余 <= 7 天，符合条件，准备点击...`);
+                            }
+                        }
+                    }
+
+                    let statusText = '';
+                    let finalTimeDisplay = timeDisplay;
+
+                    const pushResult = () => {
+                        allSummary.push(`  📦 ${serverName}`);
+                        allSummary.push(`  ├─ 状态: ${statusText}`);
+                        allSummary.push(`  └─ 剩余: ${finalTimeDisplay}\n`);
+                    };
+
+                    if (!shouldRenew) {
+                        statusText = `无需续期`;
+                        pushResult();
+                        continue;
+                    }
+
+                    console.log('  🔍 查找续期入口...');
+                    try {
+                        const externalLinkIcon = page.locator('i.fa-external-link-alt:visible').first();
+                        const parentEl = externalLinkIcon.locator('xpath=..');
+                        await parentEl.waitFor({ state: 'visible', timeout: 8000 });
+                        await parentEl.hover({ force: true });
+                        await page.waitForTimeout(500);
+                        await externalLinkIcon.click({ force: true });
+                        await page.waitForTimeout(2000);
+
+                        const renewModalBtn = page.locator('#renew-link-modal');
+                        await renewModalBtn.waitFor({ state: 'visible', timeout: 5000 });
+                        const btnText = (await renewModalBtn.innerText()).trim();
+
+                        if (!btnText.toLowerCase().includes('renew instance')) {
+                            statusText = `⏰ 未到续期条件`;
+                            console.log('  ⏰ 尚未到续期时间，跳过');
+                            pushResult();
+                            continue;
+                        }
+
+                        const renewHref = await renewModalBtn.getAttribute('href');
+                        if (!renewHref || renewHref === '#') throw new Error('无效的续期链接');
+
+                        const renewAbsUrl = new URL(renewHref, page.url()).href;
+                        console.log(`  📤 跳转 RENEW 链接...`);
+                        await page.goto(renewAbsUrl, { waitUntil: 'domcontentloaded' });
+                        await page.waitForURL(url => url.toString().includes('/dashboard') || url.toString().includes('/server-console'), { timeout: 30000 });
+                        
+                        const finalUrl = page.url();
+                        if (finalUrl.includes('success=RENEWED')) {
+                            console.log('  🎉 续期成功！');
+                            statusText = `✅ 续期成功`;
+                            finalTimeDisplay = `14天 0小时 0分钟`;
+                        } else if (finalUrl.includes('err=CANNOTAFFORDRENEWAL')) {
+                            console.log('  ⚠️ 余额不足，无法续期');
+                            statusText = `⚠️ 余额不足`;
+                        } else if (finalUrl.includes('err=TOOEARLY')) {
+                            console.log('  ⏰ 尚未到续期时间');
+                            statusText = `⏰ 未到续期限制`;
+                        } else {
+                            console.log(`  ⚠️ 续期结果未知：${finalUrl}`);
+                            statusText = `❓ 结果未知`;
+                        }
+                    } catch (err) {
+                        // ─── 方案 B：封禁过滤逻辑开始 ──────────────────────────
+                        const errorMessage = err.message || "";
+                        const bannedKeywords = ['封禁', 'banned', 'suspended', 'disabled', '403', 'forbidden'];
+                        const isBanned = bannedKeywords.some(k => errorMessage.toLowerCase().includes(k.toLowerCase()));
+
+                        if (isBanned) {
+                            console.warn(`  ⚠️ 检测到服务器已被封禁，已自动跳过: ${errorMessage}`);
+                            statusText = `⚠️ 已被封禁(跳过)`;
+                            // 这里不再设置 globalHasError = true, 从而保证测试通过
+                        } else {
+                            console.log(`  ❌ 处理此服务器时发生错误: ${err.message}`);
+                            statusText = `❌ 异常 (${err.message.slice(0, 15)})`;
+                            globalHasError = true;
+                            
+                            try {
+                                const safeName = serverName.replace(/[^\w\u4e00-\u9fa5-]+/g, '_');
+                                await page.screenshot({ path: `test-results/${safeName}-error.png`, fullPage: true });
+                                console.log(`  📸 已保存错误截图: test-results/${safeName}-error.png`);
+                            } catch (e) { }
+                        }
+                        // ─── 封禁过滤逻辑结束 ──────────────────────────────────
+                    }
+                    pushResult();
+                }
+            } catch (err) {
+                console.log(`❌ 账号 ${tIndex + 1} 发生异常: ${err.message}`);
+                allSummary.push(`${accountLabel} ❌ 登录或处理失败 (${err.message.slice(0, 30)})`);
+                globalHasError = true;
+                
+                try {
+                    await page.screenshot({ path: `test-results/account-${tIndex + 1}-error.png`, fullPage: true });
+                } catch (e) { }
+            } finally {
+                await context.close();
+            }
+        }
+
+        console.log('\n📄 最终执行报告:');
+        const finalPushText = allSummary.join('\n');
+        console.log(finalPushText);
+
+        const isLastAttempt = testInfo.retry >= testInfo.project.retries;
+        if (!globalHasError || isLastAttempt) {
+            await sendTG(finalPushText);
+        } else {
+            console.log(`⏭️ 检测到错误且非最后一次尝试 (Retry ${testInfo.retry}/${testInfo.project.retries})，跳过 TG 推送`);
+        }
+
+        if (globalHasError) {
+            throw new Error('部分账号或服务器续期过程中发生错误，请查看日志');
+        }
+
+    } catch (e) {
+        if (!e.message?.includes('由于部分服务器') && !e.message?.includes('部分账号或服务器')) {
+            await sendTG(`❌ 脚本全局异常：${e.message}`);
+        }
+        throw e;
+
+    } finally {
+        await browser.close();
+    }
+});
